@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Asset Manager</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='4' y='5' width='24' height='7' rx='2' fill='%232458d6'/%3E%3Crect x='4' y='14' width='24' height='7' rx='2' fill='%232458d6' opacity='.7'/%3E%3Crect x='4' y='23' width='24' height='5' rx='2' fill='%232458d6' opacity='.45'/%3E%3C/svg%3E">
+  <script>
+    // Apply a saved light/dark choice before the page draws, so it doesn't flash.
+    try {
+      const theme = localStorage.getItem('assetManager.theme');
+      if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+    } catch {}
+  </script>
+  <link rel="stylesheet" href="/css/app.css">
+  <script type="module" src="/js/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="4" y="5" width="24" height="7" rx="2"/><rect x="4" y="14" width="24" height="7" rx="2" opacity=".7"/><rect x="4" y="23" width="24" height="5" rx="2" opacity=".45"/></svg>
+      Asset Manager
+    </div>
+    <nav class="tabs" aria-label="Sections">
+      <a href="#/assets" data-view="assets">Asset list</a>
+      <a href="#/import" data-view="import">Add from documents</a>
+      <a href="#/history" data-view="history">Change history</a>
+    </nav>
+    <button type="button" class="theme-toggle" id="theme-toggle">
+      <svg class="to-dark" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg>
+      <svg class="to-light" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    </button>
+    <button type="button" class="user-chip" id="user-chip" title="Change your name">
+      <span class="muted">You:</span> <span id="user-name">—</span>
+    </button>
+  </header>
+
+  <main>
+    <!-- Asset list: search, add, edit, remove -->
+    <section id="view-assets" class="view" hidden>
+      <div class="page-head">
+        <div>
+          <h1>Asset list</h1>
+          <p class="muted" id="asset-count" aria-live="polite"></p>
+        </div>
+        <div class="actions">
+          <div class="menu">
+            <button type="button" class="btn" id="export-btn" aria-haspopup="true" aria-expanded="false">Download list</button>
+            <div class="menu-list" id="export-menu" hidden>
+              <a href="/api/export.xlsx" download>Excel (.xlsx)</a>
+              <a href="/api/export.csv" download>CSV (.csv)</a>
+            </div>
+          </div>
+          <button type="button" class="btn primary" id="add-asset-btn">Add asset</button>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <label class="search">
+          <span class="visually-hidden">Search assets</span>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4.5 4.5"/></svg>
+          <input type="search" id="search" placeholder="Search brand, model, serial, location, project…" autocomplete="off">
+        </label>
+        <label>
+          <span class="visually-hidden">Show</span>
+          <select id="filter">
+            <option value="">All assets</option>
+            <option value="no-maintenance">Not on a maintenance agreement</option>
+            <option value="warranty-90">Warranty ended or ending in 90 days</option>
+          </select>
+        </label>
+        <div class="segmented" role="group" aria-label="List">
+          <button type="button" data-status="active" aria-pressed="true">On the list</button>
+          <button type="button" data-status="removed" aria-pressed="false">Removed</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="grid" id="asset-table">
+          <thead>
+            <tr>
+              <th>Brand</th><th>Model</th><th>Serial number</th><th>Location</th>
+              <th>Project</th><th>Maintenance</th><th>Warranty end</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div class="empty" id="asset-empty" hidden></div>
+      </div>
+    </section>
+
+    <!-- Import: upload vendor documents, review, confirm -->
+    <section id="view-import" class="view" hidden>
+      <div class="page-head">
+        <div>
+          <h1>Add from documents</h1>
+          <p class="muted">Upload delivery orders, completion documents or purchase orders. Check what was read, fix any gaps, then add the rows to the list.</p>
+        </div>
+      </div>
+
+      <label class="dropzone" id="dropzone">
+        <input type="file" id="file-input" multiple accept=".pdf,.xlsx,.xls,.csv,.jpg,.jpeg,.png,.zip">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0-4.5 4.5M12 4l4.5 4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+        <strong>Drop vendor documents here, or click to choose</strong>
+        <span class="muted">PDF, Excel, CSV, JPG / PNG scans, or a ZIP of them · up to 25 MB per document</span>
+      </label>
+
+      <div class="import-layout" id="import-layout" hidden>
+        <ul class="doc-queue" id="doc-queue" aria-label="Uploaded documents"></ul>
+        <div class="review" id="review"></div>
+      </div>
+    </section>
+
+    <!-- History: every add, edit, removal and import -->
+    <section id="view-history" class="view" hidden>
+      <div class="page-head">
+        <div>
+          <h1>Change history</h1>
+          <p class="muted">Every change to the list, newest first.</p>
+        </div>
+      </div>
+      <ol class="history" id="history-list"></ol>
+    </section>
+  </main>
+
+  <!-- Add / edit an asset -->
+  <dialog id="asset-dialog" class="sheet">
+    <form method="dialog" id="asset-form" novalidate>
+      <header class="sheet-head">
+        <h2 id="asset-dialog-title">Asset</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">×</button>
+      </header>
+      <div class="sheet-body">
+        <div class="notice" id="asset-notice" hidden></div>
+        <div class="form-grid" id="asset-fields"></div>
+        <p class="source" id="asset-source" hidden></p>
+        <details class="asset-history" id="asset-history" hidden>
+          <summary>History of this asset</summary>
+          <ol class="history compact"></ol>
+        </details>
+      </div>
+      <footer class="sheet-foot">
+        <button type="button" class="btn danger-quiet" id="remove-btn">Remove from list</button>
+        <button type="button" class="btn" id="replace-btn" title="Swap this asset for a different one, e.g. after a failure">Replace…</button>
+        <button type="button" class="btn" id="restore-btn" hidden>Put back on the list</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn" data-close>Cancel</button>
+        <button type="submit" class="btn primary" id="save-btn">Save</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Replace an asset with a different one -->
+  <dialog id="replace-dialog" class="sheet">
+    <form method="dialog" id="replace-form" novalidate>
+      <header class="sheet-head">
+        <h2 id="replace-title">Replace asset</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">×</button>
+      </header>
+      <div class="sheet-body">
+        <div class="notice warn" id="replace-old"></div>
+        <div class="form-grid">
+          <label class="field">
+            <span>Why is it being replaced? <span class="req" aria-hidden="true">*</span></span>
+            <select id="replace-reason">
+              <option value="">Choose a reason…</option>
+              <option>Failed</option>
+              <option>Replaced under warranty (RMA)</option>
+              <option>Upgraded</option>
+              <option>End of life</option>
+              <option>Other</option>
+            </select>
+            <span class="error" id="replace-reason-error" hidden>Choose a reason.</span>
+          </label>
+          <label class="field">
+            <span>Details</span>
+            <input type="text" id="replace-detail" maxlength="200" placeholder="e.g. RMA 55123, failed power supply">
+          </label>
+        </div>
+        <div>
+          <h3 class="section-title">The new asset</h3>
+          <p class="muted">Hostname, location, project, vendor and maintenance agreement are copied from the old asset. Change any that are different, and check the new one is covered by the agreement.</p>
+        </div>
+        <div class="notice" id="replace-notice" hidden></div>
+        <div class="form-grid" id="replace-fields"></div>
+      </div>
+      <footer class="sheet-foot">
+        <span class="spacer"></span>
+        <button type="button" class="btn" data-close>Cancel</button>
+        <button type="submit" class="btn primary">Review replacement</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Confirm a change before it is saved -->
+  <dialog id="confirm-dialog" class="sheet small">
+    <form method="dialog">
+      <header class="sheet-head"><h2 id="confirm-title">Check before saving</h2></header>
+      <div class="sheet-body" id="confirm-body"></div>
+      <footer class="sheet-foot">
+        <span class="spacer"></span>
+        <button type="submit" class="btn" value="cancel">Go back</button>
+        <button type="submit" class="btn primary" value="ok" id="confirm-ok">Save</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Who is making changes -->
+  <dialog id="name-dialog" class="sheet small">
+    <form method="dialog" id="name-form">
+      <header class="sheet-head"><h2>What's your name?</h2></header>
+      <div class="sheet-body">
+        <p class="muted">Your name is recorded with every change you make, so the team can see who changed what.</p>
+        <label class="field">
+          <span>Name</span>
+          <input type="text" id="name-input" maxlength="100" required autocomplete="name">
+        </label>
+      </div>
+      <footer class="sheet-foot">
+        <span class="spacer"></span>
+        <button type="submit" class="btn primary">Continue</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+</body>
+</html>

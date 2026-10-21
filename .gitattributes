@@ -1,0 +1,4 @@
+# Sample documents must stay byte-for-byte as generated (some are deliberately
+# broken), so Git never converts their line endings.
+samples/** binary
+samples/README.md text
