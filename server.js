@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as XLSX from 'xlsx';
 import { openDatabase, ASSET_FIELDS, FIELD_LABELS } from './src/db.js';
+import { aiConfig, extractWithAi } from './src/ai.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(root, 'data');
@@ -15,6 +16,8 @@ fs.mkdirSync(uploadDir, { recursive: true });
 const store = openDatabase(path.join(dataDir, 'assets.db'));
 const app = express();
 app.disable('x-powered-by');
+// AI reading can carry page images; everything else stays small.
+app.use('/api/ai/extract', express.json({ limit: '20mb' }));
 app.use(express.json({ limit: '2mb' }));
 
 // Front end and the document-reading libraries it loads, all served locally so
@@ -116,6 +119,17 @@ app.post('/api/import', (req, res) => {
   res.status(201).json({ assets });
 });
 
+// Optional AI reading (src/ai.js). Only offered when an API key is configured.
+app.get('/api/ai/status', (_req, res) => {
+  const { apiKey, model } = aiConfig();
+  res.json({ enabled: Boolean(apiKey), model, provider: 'OpenCode Go' });
+});
+
+app.post('/api/ai/extract', async (req, res) => {
+  const { fileName, text, images } = req.body ?? {};
+  res.json(await extractWithAi({ fileName, text, images }));
+});
+
 app.get('/api/history', (req, res) => {
   res.json({ history: store.history({ limit: req.query.limit }) });
 });
@@ -146,7 +160,7 @@ app.use((err, _req, res, _next) => {
   const status = err.status ?? (err.code === 'LIMIT_FILE_SIZE' ? 413 : 500);
   if (status >= 500) console.error(err);
   res.status(status).json({
-    error: status >= 500 ? 'Something went wrong on the server.' : err.message,
+    error: status >= 500 && !err.expose ? 'Something went wrong on the server.' : err.message,
     ...(err.details ?? {}),
   });
 });

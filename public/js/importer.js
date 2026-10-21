@@ -1,8 +1,9 @@
 // Add from documents: upload → read → check and correct → confirm into the list.
 import { api, el, toast, plural, serialKey, confirmDialog } from './common.js';
 import { readDocument } from './readers.js';
-import { extractAssets } from './extract.js';
+import { extractAssets, sourceToText } from './extract.js';
 import { isZip, unzipDocuments } from './zip.js';
+import { loadAiStatus, aiAvailable, askAndRead, aiNotice } from './ai.js';
 
 const ROW_FIELDS = [
   { key: 'brand', label: 'Brand' },
@@ -26,6 +27,7 @@ let nextId = 1;
 const $ = (id) => document.getElementById(id);
 
 export function initImporter() {
+  loadAiStatus();
   const input = $('file-input');
   const zone = $('dropzone');
   input.addEventListener('change', () => {
@@ -105,7 +107,7 @@ async function readOne(doc) {
   doc.message = 'Reading…';
   update(doc);
   try {
-    const { sources, preview, note } = await readDocument(doc.file, ({ message, progress }) => {
+    const { sources, preview, note, scans = [] } = await readDocument(doc.file, ({ message, progress }) => {
       doc.message = message;
       doc.progress = progress;
       update(doc, { progressOnly: true });
@@ -113,6 +115,9 @@ async function readOne(doc) {
     if (doc.removed) return releasePreview(preview);
     doc.preview = preview;
     doc.note = note ?? '';
+    // Kept for "Read with AI": what was read, and the scanned pages.
+    doc.aiText = sources.map(sourceToText).filter(Boolean).join('\n\n--- next sheet or part ---\n\n');
+    doc.scans = scans;
     for (const source of sources) {
       const { rows, fields, missedRows } = extractAssets(source);
       doc.missedRows = (doc.missedRows ?? 0) + missedRows;
@@ -319,6 +324,50 @@ function manualEntry(doc) {
   update(doc);
 }
 
+// Replaces the rows with the AI's reading, keeping the app's own reading so
+// it can be put back.
+async function runAi(doc) {
+  const reply = await askAndRead(doc, () => {
+    doc.aiBusy = true;
+    update(doc);
+  });
+  doc.aiBusy = false;
+  if (reply) {
+    doc.ruleState ??= {
+      rows: doc.rows,
+      found: doc.found,
+      unreadable: doc.unreadable,
+      missedRows: doc.missedRows,
+      message: doc.message,
+      batch: { ...doc.batch },
+    };
+    doc.rows = reply.rows.length ? reply.rows : [blankRow()];
+    doc.found = reply.rows.length;
+    doc.unreadable = reply.rows.filter((r) => !r.serial).length;
+    doc.missedRows = 0;
+    // The AI may have corrected an OCR misreading here, so its values win,
+    // except over anything a person has already typed.
+    for (const key of ['vendor', 'project']) {
+      if (reply[key] && !doc.batchEdited?.has(key)) doc.batch[key] = reply[key];
+    }
+    doc.ai = reply.info;
+    doc.message = doc.found ? `Read with AI · ${foundText(doc)}` : 'Read with AI · nothing relevant found';
+    await refreshExisting(doc);
+  }
+  update(doc);
+}
+
+async function undoAi(doc) {
+  const { batch, ...rest } = doc.ruleState;
+  Object.assign(doc, rest);
+  // Put back the app's own vendor and project, keeping anything typed since.
+  for (const key of ['vendor', 'project']) if (!doc.batchEdited?.has(key)) doc.batch[key] = batch[key];
+  doc.ruleState = null;
+  doc.ai = null;
+  await refreshExisting(doc);
+  update(doc);
+}
+
 function renderEditor(doc) {
   const rowsBody = el('tbody');
   const status = el('p', { class: 'muted', 'aria-live': 'polite' });
@@ -343,8 +392,8 @@ function renderEditor(doc) {
       }
       const msg = tr.querySelector('.row-msg');
       const p = problems.byRow.get(i);
-      msg.textContent = p?.text ?? '';
-      msg.className = 'row-msg bad';
+      msg.textContent = p?.text ?? row.aiNote ?? '';
+      msg.className = p ? 'row-msg bad' : 'row-msg warn';
     });
     const count = doc.rows.length;
     confirmBtn.textContent = `Add ${plural(count, 'asset')} to the list`;
@@ -365,7 +414,14 @@ function renderEditor(doc) {
         'label',
         { class: 'field' },
         el('span', {}, f.label),
-        el('input', { type: f.type ?? 'text', value: doc.batch[f.key], oninput: (e) => (doc.batch[f.key] = e.target.value) }),
+        el('input', {
+          type: f.type ?? 'text',
+          value: doc.batch[f.key],
+          oninput: (e) => {
+            doc.batch[f.key] = e.target.value;
+            (doc.batchEdited ??= new Set()).add(f.key);
+          },
+        }),
       ),
     ),
   );
@@ -383,17 +439,25 @@ function renderEditor(doc) {
         el('span', {}, el('span', { class: 'tag bad' }, 'Red'), ' not found, type it in'),
         el('span', {}, el('span', { class: 'tag warn' }, 'Amber'), ' unsure or guessed, check it'),
       ),
+      aiAvailable() && !doc.manual && doc.aiText !== undefined
+        ? el(
+            'button',
+            { type: 'button', class: 'btn small', disabled: doc.aiBusy, onclick: () => runAi(doc) },
+            doc.aiBusy ? 'Reading with AI…' : doc.ai ? 'Read again with AI' : 'Read with AI',
+          )
+        : null,
     ),
     el(
       'div',
       { class: 'panel-body' },
+      doc.ai ? aiNotice(doc, () => undoAi(doc)) : null,
       !doc.found && !doc.manual
         ? el(
             'div',
             { class: 'notice warn' },
             'Nothing that looks like equipment (a brand, model and serial number) was found in this document. ' +
               "If it isn't a delivery order, completion document or purchase order, remove it with the × on its card. " +
-              'Otherwise, type the assets in below.',
+              (aiAvailable() && !doc.ai ? 'Otherwise, try Read with AI, or type the assets in below.' : 'Otherwise, type the assets in below.'),
           )
         : null,
       doc.unreadable

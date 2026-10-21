@@ -339,6 +339,15 @@ function uniqueBySerial(rows) {
   });
 }
 
+// The document as plain text, one line per row, for sending to the AI.
+export function sourceToText(source) {
+  const lines =
+    source.kind === 'grid'
+      ? source.rows.map((r) => r.map(clean).filter(Boolean).join(' | '))
+      : source.lines.map((l) => lineToCells(l.words ?? []).map((c) => c.text).join('   '));
+  return lines.filter(Boolean).join('\n');
+}
+
 // → { rows, fields: { vendor, project }, missedRows }
 // missedRows counts table rows that seem to be there but couldn't be read.
 export function extractAssets(source) {

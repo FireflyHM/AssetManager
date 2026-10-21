@@ -112,6 +112,7 @@ async function readPdf(file, onProgress) {
   const pages = Math.min(pdf.numPages, MAX_PAGES);
   const preview = el('div');
   const words = [];
+  const scans = []; // pages that had to be read with OCR, kept for AI reading
   let scanned = 0;
   for (let n = 1; n <= pages; n++) {
     onProgress({ message: `Reading page ${n} of ${pages}`, progress: (n - 1) / pages });
@@ -134,6 +135,7 @@ async function readPdf(file, onProgress) {
     } else {
       // No text layer: it's a scan, so read the rendered page with OCR.
       scanned++;
+      scans.push(canvas);
       const ocrWords = await ocr(canvas, (p) =>
         onProgress({ message: `Reading scanned page ${n} of ${pages}`, progress: (n - 1 + p) / pages }),
       );
@@ -149,7 +151,7 @@ async function readPdf(file, onProgress) {
   ]
     .filter(Boolean)
     .join(' ');
-  return { sources: [{ kind: 'positioned', lines: groupIntoLines(words) }], preview, note };
+  return { sources: [{ kind: 'positioned', lines: groupIntoLines(words) }], preview, note, scans };
 }
 
 async function renderPage(page, scale) {
@@ -178,6 +180,7 @@ async function readImage(file, onProgress) {
   return {
     sources: [{ kind: 'positioned', lines: groupIntoLines(words) }],
     preview: el('div', {}, img),
+    scans: [canvas],
     note:
       (cutShort
         ? "This image file is incomplete (it may not have finished downloading), so part of the page is missing. Ask the vendor for the full copy. "

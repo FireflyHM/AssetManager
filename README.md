@@ -16,10 +16,45 @@ npm start
 
 Then open http://localhost:3000. The list is stored in `data/assets.db`, a SQLite file, and uploaded documents in `data/uploads/`. Back up the `data/` folder to keep the list.
 
+Settings are read from environment variables, or from a `.env` file in the project folder. Copy `.env.example` to start one. `.env` is not committed to Git.
+
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `PORT` | `3000` | Port the app listens on |
 | `DATA_DIR` | `./data` | Where the list and uploaded documents are kept |
+| `OPENCODE_API_KEY` | *(empty)* | Turns on AI reading (see below). Leave empty to keep it off |
+| `AI_MODEL` | `deepseek-v4.1-flash` | Model used for AI reading |
+| `AI_BASE_URL` | `https://opencode.ai/inference/go/openai/v1` | OpenAI-compatible API address |
+
+## AI reading (optional)
+
+The app reads documents with its own rules by default, and nothing leaves the machine. AI reading is an extra for documents the rules can't handle: unusual layouts, serials inside paragraphs, poor scans. It uses [OpenCode Go](https://opencode.ai/docs/go/) with DeepSeek V4.1 Flash.
+
+**Turning it on:** put an OpenCode Go API key in `.env` as `OPENCODE_API_KEY=...` and restart the app. A **Read with AI** button then appears on each document on the **Add from documents** screen. The key stays on the server and is never sent to the browser.
+
+**What happens when someone clicks it:**
+1. The app asks first, naming the document and the outside service. Nothing is sent without that confirmation.
+2. The server sends the text the app already read from the document to OpenCode Go. For scans, it also sends page images, scaled to at most 1344 px. If the service refuses images, the app retries with text only.
+3. The model returns brand, model and serial rows, which go into the same review as always:
+   - values the model wasn't sure of are amber, with its note under the row;
+   - any serial that doesn't appear in the text the app read is amber too, because it may be a correction of an OCR misreading, or a mistake;
+   - **Undo** puts the app's own reading back.
+
+**Data policy:** AI reading sends document contents (equipment, serial numbers, vendor and project names) to a third party. Check that your organisation allows this before adding a key. Without a key, the app makes no outside calls.
+
+**OpenCode Go's terms:** its docs describe it as "designed for OpenCode and other coding agents", and ask clients to send "typical coding agent traffic". Reading delivery documents isn't that, so check this use is acceptable before relying on it. Because the request is a standard OpenAI-compatible one, another provider can be used by changing `AI_BASE_URL`, `AI_MODEL` and the key. The app sends the `x-opencode-session` header and its own user agent, as OpenCode Go asks; other providers ignore them.
+
+**Tested on 21 October 2026** against the real service with the samples in `samples/`:
+- **Clean documents** were read correctly in a few seconds each.
+- **Damaged scans:**
+  - On the coffee-stain scan, it completed the truncated serial and read the stained one.
+  - On the faded fax, it corrected every OCR misreading.
+  - On the torn page, it recovered the row lost under the fold.
+  - In each case the corrected values were amber, with a note explaining the change.
+- **Unrelated documents** came back empty, each with an explanation.
+- **One request failed** with a temporary "Endpoint is unavailable" error (429) from OpenCode Go. Trying again a few minutes later worked.
+
+The server code is in [src/ai.js](src/ai.js) and the browser side in [public/js/ai.js](public/js/ai.js). The tests in `test/ai.test.js` use a fake service, so they need no key.
 
 ## Using it
 
